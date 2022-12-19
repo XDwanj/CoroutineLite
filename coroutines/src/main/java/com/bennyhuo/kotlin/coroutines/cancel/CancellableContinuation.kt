@@ -3,7 +3,6 @@ package com.bennyhuo.kotlin.coroutines.cancel
 import com.bennyhuo.kotlin.coroutines.CancellationException
 import com.bennyhuo.kotlin.coroutines.Job
 import com.bennyhuo.kotlin.coroutines.OnCancel
-import java.util.concurrent.CopyOnWriteArrayList
 import java.util.concurrent.atomic.AtomicReference
 import kotlin.coroutines.Continuation
 import kotlin.coroutines.intrinsics.COROUTINE_SUSPENDED
@@ -11,112 +10,131 @@ import kotlin.coroutines.intrinsics.intercepted
 import kotlin.coroutines.intrinsics.suspendCoroutineUninterceptedOrReturn
 import kotlin.coroutines.resumeWithException
 
+/**
+ * 可取消的协程体
+ * @param T
+ * @property continuation Continuation<T>
+ * @property state AtomicReference<CancelState>
+ * @property decision AtomicReference<(CancelDecision..CancelDecision?)>
+ * @property isCompleted Boolean
+ * @constructor
+ */
 class CancellableContinuation<T>(private val continuation: Continuation<T>) : Continuation<T> by continuation {
 
-    private val state = AtomicReference<CancelState>(CancelState.InComplete)
-    private val decision = AtomicReference(CancelDecision.UNDECIDED)
+  /**
+   * 状态
+   */
+  private val state = AtomicReference<CancelState>(CancelState.InComplete)
 
-    val isCompleted: Boolean
-        get() = when (state.get()) {
-            CancelState.InComplete,
-            is CancelState.CancelHandler -> false
-            is CancelState.Complete<*>,
-            CancelState.Cancelled -> true
-        }
+  /**
+   * 决定
+   */
+  private val decision = AtomicReference(CancelDecision.UNDECIDED)
 
-    override fun resumeWith(result: Result<T>) {
-        when {
-            decision.compareAndSet(CancelDecision.UNDECIDED, CancelDecision.RESUMED) -> {
-                // before getResult called.
-                state.set(CancelState.Complete(result.getOrNull(), result.exceptionOrNull()))
-            }
-            decision.compareAndSet(CancelDecision.SUSPENDED, CancelDecision.RESUMED) -> {
-                state.updateAndGet { prev ->
-                    when (prev) {
-                        is CancelState.Complete<*> -> {
-                            throw IllegalStateException("Already completed.")
-                        }
-                        else -> {
-                            CancelState.Complete(result.getOrNull(), result.exceptionOrNull())
-                        }
-                    }
-                }
-                continuation.resumeWith(result)
-            }
-        }
+  /**
+   * 是否完成
+   */
+  val isCompleted: Boolean
+    get() = when (state.get()) {
+      CancelState.InComplete,
+      is CancelState.CancelHandler -> false
+      is CancelState.Complete<*>,
+      CancelState.Cancelled -> true
     }
 
-    fun getResult(): Any? {
-        installCancelHandler()
-
-        if(decision.compareAndSet(CancelDecision.UNDECIDED, CancelDecision.SUSPENDED))
-            return COROUTINE_SUSPENDED
-
-        return when (val currentState = state.get()) {
-            is CancelState.CancelHandler,
-            CancelState.InComplete -> COROUTINE_SUSPENDED
-            CancelState.Cancelled -> throw CancellationException("Continuation is cancelled.")
+  override fun resumeWith(result: Result<T>) {
+    when {
+      decision.compareAndSet(CancelDecision.UNDECIDED, CancelDecision.RESUMED) -> {
+        // before getResult called.
+        state.set(CancelState.Complete(result.getOrNull(), result.exceptionOrNull()))
+      }
+      decision.compareAndSet(CancelDecision.SUSPENDED, CancelDecision.RESUMED) -> {
+        state.updateAndGet { prev ->
+          when (prev) {
             is CancelState.Complete<*> -> {
-                (currentState as CancelState.Complete<T>).let {
-                    it.exception?.let { throw it } ?: it.value
-                }
+              throw IllegalStateException("Already completed.")
             }
-        }
-    }
-
-    private fun installCancelHandler() {
-        if (isCompleted) return
-        val parent = continuation.context[Job] ?: return
-        parent.invokeOnCancel {
-            doCancel()
-        }
-    }
-
-    fun cancel() {
-        if (isCompleted) return
-        val parent = continuation.context[Job] ?: return
-        parent.cancel()
-    }
-
-    fun invokeOnCancellation(onCancel: OnCancel) {
-        val newState = state.updateAndGet { prev ->
-            when (prev) {
-                CancelState.InComplete -> CancelState.CancelHandler(onCancel)
-                is CancelState.CancelHandler -> throw IllegalStateException("It's prohibited to register multiple handlers.")
-                is CancelState.Complete<*>,
-                CancelState.Cancelled -> prev
+            else -> {
+              CancelState.Complete(result.getOrNull(), result.exceptionOrNull())
             }
+          }
         }
-        if (newState is CancelState.Cancelled) {
-            onCancel()
-        }
+        continuation.resumeWith(result)
+      }
     }
+  }
 
-    private fun doCancel() {
-        val prevState = state.getAndUpdate { prev ->
-            when (prev) {
-                is CancelState.CancelHandler,
-                CancelState.InComplete -> {
-                    CancelState.Cancelled
-                }
-                CancelState.Cancelled,
-                is CancelState.Complete<*> -> {
-                    prev
-                }
-            }
+  fun getResult(): Any? {
+    installCancelHandler()
+
+    if (decision.compareAndSet(CancelDecision.UNDECIDED, CancelDecision.SUSPENDED))
+      return COROUTINE_SUSPENDED
+
+    return when (val currentState = state.get()) {
+      is CancelState.CancelHandler,
+      CancelState.InComplete -> COROUTINE_SUSPENDED
+      CancelState.Cancelled -> throw CancellationException("Continuation is cancelled.")
+      is CancelState.Complete<*> -> {
+        (currentState as CancelState.Complete<T>).let {
+          it.exception?.let { throw it } ?: it.value
         }
-        if (prevState is CancelState.CancelHandler) {
-            prevState.onCancel()
-            resumeWithException(CancellationException("Cancelled."))
-        }
+      }
     }
+  }
+
+  private fun installCancelHandler() {
+    if (isCompleted) return
+    val parent = continuation.context[Job] ?: return
+    parent.invokeOnCancel {
+      doCancel()
+    }
+  }
+
+  fun cancel() {
+    if (isCompleted) return
+    val parent = continuation.context[Job] ?: return
+    parent.cancel()
+  }
+
+  fun invokeOnCancellation(onCancel: OnCancel) {
+    val newState = state.updateAndGet { prev ->
+      when (prev) {
+        CancelState.InComplete -> CancelState.CancelHandler(onCancel)
+        is CancelState.CancelHandler -> throw IllegalStateException("It's prohibited to register multiple handlers.")
+        is CancelState.Complete<*>,
+        CancelState.Cancelled -> prev
+      }
+    }
+    if (newState is CancelState.Cancelled) {
+      onCancel()
+    }
+  }
+
+  private fun doCancel() {
+    val prevState = state.getAndUpdate { prev ->
+      when (prev) {
+        is CancelState.CancelHandler,
+        CancelState.InComplete -> {
+          CancelState.Cancelled
+        }
+        CancelState.Cancelled,
+        is CancelState.Complete<*> -> {
+          prev
+        }
+      }
+    }
+    if (prevState is CancelState.CancelHandler) {
+      prevState.onCancel()
+      resumeWithException(CancellationException("Cancelled."))
+    }
+  }
 }
 
 
 suspend inline fun <T> suspendCancellableCoroutine(
-        crossinline block: (CancellableContinuation<T>) -> Unit
+  crossinline block: (CancellableContinuation<T>) -> Unit
 ): T = suspendCoroutineUninterceptedOrReturn { continuation ->
-    val cancellable = CancellableContinuation(continuation.intercepted())
-    block(cancellable)
-    cancellable.getResult()
+  val cancellable = CancellableContinuation(continuation.intercepted())
+  block(cancellable)
+  cancellable.getResult()
 }

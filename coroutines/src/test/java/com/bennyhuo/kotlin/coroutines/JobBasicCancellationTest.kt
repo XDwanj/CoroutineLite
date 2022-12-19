@@ -15,36 +15,36 @@ import org.junit.Test
 @Suppress("DEPRECATION") // cancel(cause)
 class JobBasicCancellationTest : TestBase() {
 
-    @Test
-    fun testJobCancelChild() = runTest {
-        val parent = launch {
-            expect(1)
-            val child = launch {
-                expect(2)
-            }
-            child.cancel()
-            child.join()
-            expect(3)
-        }
-
-        parent.join()
-        finish(4)
+  @Test
+  fun testJobCancelChild() = runTest {
+    val parent = launch {
+      expect(1)
+      val child = launch {
+        expect(2)
+      }
+      child.cancel()
+      child.join()
+      expect(3)
     }
 
-    @Test
-    fun testAsyncCancelChild() = runTest {
-        val parent = async {
-            expect(1)
-            val child = async {
-                expect(2)
-            }
-            child.cancel()
-            child.await()
-            expect(3)
-        }
+    parent.join()
+    finish(4)
+  }
 
-        parent.await()
-        finish(4)
+  @Test
+  fun testAsyncCancelChild() = runTest {
+    val parent = async {
+      expect(1)
+      val child = async {
+        expect(2)
+      }
+      child.cancel()
+      child.await()
+      expect(3)
     }
+
+    parent.await()
+    finish(4)
+  }
 
 }

@@ -9,21 +9,21 @@ typealias CancellationException = java.util.concurrent.CancellationException
 typealias OnCancel = () -> Unit
 
 interface Job : CoroutineContext.Element {
-    companion object Key : CoroutineContext.Key<Job>
+  companion object Key : CoroutineContext.Key<Job>
 
-    override val key: CoroutineContext.Key<*> get() = Job
+  override val key: CoroutineContext.Key<*> get() = Job
 
-    val isActive: Boolean
+  val isActive: Boolean
 
-    fun invokeOnCancel(onCancel: OnCancel): Disposable
+  fun invokeOnCancel(onCancel: OnCancel): Disposable
 
-    fun invokeOnCompletion(onComplete: OnComplete): Disposable
+  fun invokeOnCompletion(onComplete: OnComplete): Disposable
 
-    fun cancel()
+  fun cancel()
 
-    fun remove(disposable: Disposable)
+  fun remove(disposable: Disposable)
 
-    fun attachChild(child: Job): Disposable
+  fun attachChild(child: Job): Disposable
 
-    suspend fun join()
+  suspend fun join()
 }
